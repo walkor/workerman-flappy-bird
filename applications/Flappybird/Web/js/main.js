@@ -38,7 +38,7 @@
 					for (var q = [], f = a.getUint16(c, !0), c = c + 2, h = 0; h < f; h++) q.push(a.getUint16(c, !0)),
 					c += 2;
 					f = -1 != r.indexOf(l);
-					(V.checked || W()) && !f && 10 > q.length && 100 < p.length + F.length || l == E || X() && f || (l = U(l, q, x), l.isParty = f, F.push(l))
+					(W()) && !f && 10 > q.length && 100 < p.length + F.length || l == E || X() && f || (l = U(l, q, x), l.isParty = f, F.push(l))
 				}
 				break;
 			case 3:
@@ -128,7 +128,7 @@
 			28 <= aa ? (t += 10, 1E3 < t && (t = 1E3)) : (t -= 10, 20 > t && (t = 20));
 			W() && 20 < t && (t = 20);
 			var c = t;
-			V.checked && (c = 20);
+			c = 20;
 			for (a = 0; a < p.length && (p[a] == d || g > c && !p[a].isParty || !(p[a].draw() && ++g > c) || !(2 > r.length)); ++a);
 			null != d && d.draw();
 			b.restore();
@@ -368,7 +368,7 @@
 		C.onkeyup = D;
 		C.onkeypress = D;
 		C.value = localStorage.getItem("nick");
-		V = y.getElementById("perfomance");
+		//V = y.getElementById("perfomance");
 		m = y.getElementById("canvas");
 		b = m.getContext("2d");
 		wa = m.width;
