@@ -32,7 +32,7 @@ class Event
            $new_message .= "Upgrade: websocket\r\n";
            $new_message .= "Sec-WebSocket-Version: 13\r\n";
            $new_message .= "Connection: Upgrade\r\n";
-           $new_message .= "Sec-WebSocket-Protocol::workerman.net\r\n";
+           $new_message .= "Sec-WebSocket-Protocol: workerman.net\r\n";
            $new_message .= "Sec-WebSocket-Accept: " . $new_key .  "\r\n\r\n";
            
            // 把时间戳当成uid，uid固定为10位数字
