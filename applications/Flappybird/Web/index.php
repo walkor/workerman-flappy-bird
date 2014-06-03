@@ -10,6 +10,7 @@
 <script src="/js/bootstrap.min.js"></script>
 </head>
 <body>
+<input type="hidden" id="nickname" >
 <canvas id="canvas" width="800" height="512" style="margin: 3px auto 0px auto;"></canvas>
 <script type="text/javascript" src="/js/main.js"></script>
 </body>
