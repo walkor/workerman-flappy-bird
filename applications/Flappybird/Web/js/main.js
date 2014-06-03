@@ -6,7 +6,7 @@
 		w = A[~~ (A.length * Math.random())];
 		u && (w = A[ga(u) % A.length]);
 		console.log("Connecting to " + w);
-		v = new WebSocket(w, "workerman.net");
+		v = new WebSocket(w);
 		v.binaryType = "arraybuffer";
 		(v.onopen = function(a) {
 			k = [];
@@ -426,7 +426,7 @@
 	oa = new Image,
 	s = [];
 	console.log(f.location.origin);
-	var A = ["ws://workerman.net:8283"],
+	var A = ["ws://"+document.domain+":8283"],
 	w = null,
 	z = !1;
 	setInterval(function() {
