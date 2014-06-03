@@ -76,7 +76,7 @@
 				a = new DataView(a),
 				M = a.getUint32(1, !0),
 				G = a.getInt32(5, !0),
-				M == E && (N = "Congratulations, you have set the highscore! You deserve a crown!")
+				M == E && (N = "祝贺你，获得最好分! 你获得一个皇冠!")
 			}
 		},
 		v.onclose = function() {
@@ -119,7 +119,7 @@
 			b.translate(-n, 0);
 			for (a = 0; a < k.length; a++) k[a].draw();
 			b.restore();
-			0 != G && (b.save(), b.translate(-n, 0), b.globalAlpha *= 0.75, b.drawImage(h, 0, 564, 34, 72, G - 34, 330, 34, 72), b.globalAlpha /= 0.75, b.textAlign = "right", O("Highscore", G, 325), b.restore());
+			0 != G && (b.save(), b.translate(-n, 0), b.globalAlpha *= 0.75, b.drawImage(h, 0, 564, 34, 72, G - 34, 330, 34, 72), b.globalAlpha /= 0.75, b.textAlign = "right", O("最高分", G, 325), b.restore());
 			for (a = -(Math.floor(n) % 336); a < m.width;) b.drawImage(h, 584, 0, 336, 111, a, 401, 336, 111),
 			a += 336;
 			var g = 0;
@@ -168,7 +168,7 @@
 					b.translate(c, e);
 					b.fillStyle = "rgba(0,0,0,0.5)";
 					s[6].font = "14px sans-serif";
-					s[6].setString(d.nick || "You");
+					s[6].setString(d.nick || "你");
 					var a = s[6].width + 50;
 					b.fillRect(0, 0, a, 18);
 					b.drawImage(h, 230, 762, 34, 24, 0, -4, 34, 24);
@@ -200,7 +200,7 @@
 		c = 5;
 		e = m.height - 18 - 5;
 		b.font = "10px sans-serif";
-		z ? (a(s[0], "Score: " + (null == d ? 0 : ~~ (d.x / 100))), a(s[1], "Personal Highscore: " + ~~ (P / 100)), 0 != G && a(s[2], "Server Highscore: " + ~~ (G / 100)), u && a(s[3], "Party: " + u), a(s[4], "Server #" + (A.indexOf(w) + 1)), a(s[5], "FPS: " + aa)) : a(s[0], "Connecting to server " + w.slice(5) + "...");
+		z ? (a(s[0], "分数: " + (null == d ? 0 : ~~ (d.x / 100))), a(s[1], "个人最高分: " + ~~ (P / 100)), 0 != G && a(s[2], "服务器最高分: " + ~~ (G / 100)), u && a(s[3], "区: " + u), a(s[4], "区 #" + (A.indexOf(w) + 1)), a(s[5], "FPS: " + aa)) : a(s[0], "连接服务中 " + w.slice(5) + "...");
 		b.restore()
 	}
 	function pa() {
@@ -415,7 +415,7 @@
 	u = null;
 	/^[a-z0-9]+$/.test(f.location.pathname.slice(1)) && (u = f.location.pathname.slice(1));
 	var L = {},
-	N = "Press any key or click to jump",
+	N = "按任意键开始",
 	K = null,
 	H = 0,
 	G = 0,
@@ -577,7 +577,7 @@
 		draw: function() { - 300 > this.x - n || 1200 < this.x - n || (this.isValid() || (b.globalAlpha *= 0.5), b.drawImage(h, 112, 646, 52, 320, this.x, this.y - 320, 52, 320), b.drawImage(h, 168, 646, 52, 320, this.x, this.y + this.getHeight(), 52, 320), this.isValid() || (b.globalAlpha /= 0.5))
 		},
 		drawOverlay: function() {
-			if (! (-300 > this.x - n || 1200 < this.x - n) && (this.deathCache.setString(this.deaths.toString() + " " + (this == k[0] ? "Casualties" : "Deaths")), this.deathCache.render(this.x + 26, 415, !0), 0 < this.deaths + this.passed)) {
+			if (! (-300 > this.x - n || 1200 < this.x - n) && (this.deathCache.setString(this.deaths.toString() + " " + (this == k[0] ? "阵亡" : "阵亡")), this.deathCache.render(this.x + 26, 415, !0), 0 < this.deaths + this.passed)) {
 				for (var a = this.passed, b = 1, c = 0; a && 0 == c;) c = ~~ (100 * b * a / (S + a)) / b,
 				b *= 10;
 				this.percCache.setString(c + "%");
