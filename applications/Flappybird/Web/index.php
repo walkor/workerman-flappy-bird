@@ -13,7 +13,6 @@
 </head>
 <body>
 <div class="well fcontainer">
-<center><img src="/img/logo.png" style="border-radius:5px;margin-top:15px;"></center>
 <div style="margin: 0px auto 3px auto; width: 800px;" id="topButtons">
 <input id="nickname" maxlength="16" placeholder="Nickname" style="margin:0; width: 200px; border-radius: 5px;">
 </div>
