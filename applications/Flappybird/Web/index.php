@@ -17,9 +17,18 @@
         <div class="col-md-11 column">
         <input type="hidden" id="nickname" >
         <canvas id="canvas" width="800" height="512" style="margin: 3px auto 0px auto;"></canvas>
+        <script type="text/javascript">
+/*760*90，创建于2014-6-4*/
+var cpro_id = "u1576789";
+</script>
+<script src="http://cpro.baidustatic.com/cpro/ui/c.js" type="text/javascript"></script>
         <script type="text/javascript" src="/js/main.js"></script>
         </div>
     </div>
 </div>
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3Fabcf9330bef79b4aba5b24fa373506d9' type='text/javascript'%3E%3C/script%3E"));
+</script>
 </body>
 </html>
