@@ -98,7 +98,7 @@ class Event
     */
    public static function onMessage($uid, $message)
    {
-        // $message len < 7 是用户退出了,直接返回，等待socket关闭触发onclose方法
+        // $message len < 7 可能是ping包，断开连接的包等暂时忽略
         if(strlen($message) < 7)
         {
             return ;
