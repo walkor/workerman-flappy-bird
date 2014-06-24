@@ -38,7 +38,6 @@ class Event
                    $origin_host = $url_info['host'];
                }
            }
-           $new_key = base64_encode(sha1($Sec_WebSocket_Key."258EAFA5-E914-47DA-95CA-C5AB0DC85B11",true));
            
            // 握手返回的数据
            $new_message = "HTTP/1.1 101 Switching Protocols\r\n";
