@@ -6,7 +6,7 @@
 		w = A[~~ (A.length * Math.random())];
 		u && (w = A[ga(u) % A.length]);
 		console.log("Connecting to " + w);
-		v = new WebSocket(w);
+		v = new WebSocket(w, document.domain);
 		v.binaryType = "arraybuffer";
 		(v.onopen = function(a) {
 			k = [];
