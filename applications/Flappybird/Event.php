@@ -6,12 +6,30 @@
  * @author walkor <worker-man@qq.com>
  * 
  */
-
-require_once ROOT_DIR . '/Lib/Gateway.php';
-require_once ROOT_DIR . '/Protocols/WebSocket.php';
+use \Lib\Context;
+use \Lib\Gateway;
+use \Lib\StatisticClient;
+use \Lib\Store;
+use \Protocols\GatewayProtocol;
+use \Protocols\WebSocket;
 
 class Event
 {
+    /**
+     * 当网关有客户端链接上来时触发，一般这里留空
+     */
+    public static function onGatewayConnect()
+    {
+    }
+    
+    /**
+     * 网关有消息时，判断消息是否完整
+     */
+    public static function onGatewayMessage($buffer)
+    {
+        return WebSocket::check($buffer);
+    }
+    
    /**
     * 当有用户连接时，会触发该方法
     */
@@ -102,8 +120,8 @@ class Event
         {
             return ;
         }
-        $message = \WebSocket::decode($message);
+        $message = WebSocket::decode($message);
         // 广播路线
-        Gateway::sendToAll(\WebSocket::encode(pack('CVVVC', 2, 1, 1, $uid, 0).substr($message, 1)));
+        Gateway::sendToAll(WebSocket::encode(pack('CVVVC', 2, 1, 1, $uid, 0).substr($message, 1)));
    }
 }
