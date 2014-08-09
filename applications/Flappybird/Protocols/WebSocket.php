@@ -63,15 +63,15 @@ class WebSocket
         $len = strlen($buffer);
         if($len<=125)
         {
-            return "\x81".chr($len).$buffer;
+            return "\x82".chr($len).$buffer;
         }
         else if($len<=65535)
         {
-            return "\x81".chr(126).pack("n", $len).$buffer;
+            return "\x82".chr(126).pack("n", $len).$buffer;
         }
         else
         {
-            return "\x81".chr(127).pack("xxxxN", $len).$buffer;
+            return "\x82".chr(127).pack("xxxxN", $len).$buffer;
         }
     }
     
