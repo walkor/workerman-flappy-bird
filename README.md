@@ -11,4 +11,4 @@ Flappy Birds 多人在线版
 
 2、进入目录运行./bin/workermand start
 
-3、浏览器访问地址  http://ip:8484 如图：
+3、浏览器访问地址  http://ip:8484 
