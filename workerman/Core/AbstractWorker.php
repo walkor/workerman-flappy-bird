@@ -5,7 +5,7 @@ require_once WORKERMAN_ROOT_DIR . 'Core/Events/Select.php';
 /**
  * 抽象Worker类
  * 必须实现start方法
-* @author walkor <workerman.net>
+* @author walkor <walkor@workerman.net>
 */
 abstract class AbstractWorker
 {
@@ -144,7 +144,7 @@ abstract class AbstractWorker
         {
             return array();
         }
-        return shm_get_var(Master::getShmId(), Master::STATUS_VAR_ID);
+        return @shm_get_var(Master::getShmId(), Master::STATUS_VAR_ID);
     }
     
     /**
@@ -229,7 +229,7 @@ abstract class AbstractWorker
                 return 'E_CORE_ERROR';
             case E_CORE_WARNING: // 32 //
                 return 'E_CORE_WARNING';
-            case E_CORE_ERROR: // 64 //
+            case E_COMPILE_ERROR: // 64 //
                 return 'E_COMPILE_ERROR';
             case E_CORE_WARNING: // 128 //
                 return 'E_COMPILE_WARNING';

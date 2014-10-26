@@ -18,7 +18,7 @@ require_once WORKERMAN_ROOT_DIR . 'Core/Lib/Mutex.php';
  * 
  * @package Core
  * 
-* @author walkor <workerman.net>
+* @author walkor <walkor@workerman.net>
  * <b>使用示例:</b>
  * <pre>
  * <code>
@@ -33,7 +33,7 @@ class Master
      * 版本
      * @var string
      */
-    const VERSION = '2.1.2';
+    const VERSION = '2.1.4';
     
     /**
      * 服务名
@@ -94,6 +94,12 @@ class Master
      * @var integer
      */
     const KILL_WORKER_TIME_LONG = 4;
+    
+    /**
+     * 默认listen的backlog，如果没配置backlog，则使用此值
+     * @var integer
+     */
+    const DEFAULT_BACKLOG= 1024;
     
     /**
      * 用于保存所有子进程pid ['worker_name1'=>[pid1=>pid1,pid2=>pid2,..], 'worker_name2'=>[pid7,..], ...]
@@ -310,11 +316,19 @@ class Master
         {
             if(isset($config['listen']))
             {
+                $context = self::getSocketContext($worker_name);
                 $flags = substr($config['listen'], 0, 3) == 'udp' ? STREAM_SERVER_BIND : STREAM_SERVER_BIND | STREAM_SERVER_LISTEN;
                 $error_no = 0;
                 $error_msg = '';
                 // 创建监听socket
-                self::$listenedSocketsArray[$worker_name] = stream_socket_server($config['listen'], $error_no, $error_msg, $flags);
+                if($context)
+                {
+                    self::$listenedSocketsArray[$worker_name] = stream_socket_server($config['listen'], $error_no, $error_msg, $flags, $context);
+                }
+                else
+                {
+                    self::$listenedSocketsArray[$worker_name] = stream_socket_server($config['listen'], $error_no, $error_msg, $flags);
+                }
                 if(!self::$listenedSocketsArray[$worker_name])
                 {
                     Lib\Log::add("can not create socket {$config['listen']} info:{$error_no} {$error_msg}\tServer start fail");
@@ -478,6 +492,7 @@ class Master
         pcntl_signal(SIGALRM, SIG_IGN);
         pcntl_signal(SIGINT, SIG_IGN);
         pcntl_signal(SIGUSR1, SIG_IGN);
+        pcntl_signal(SIGUSR2, SIG_IGN);
         pcntl_signal(SIGHUP, SIG_IGN);
     }
     
@@ -908,6 +923,42 @@ class Master
     }
     
     /**
+     * 获得socket的上下文选项
+     * @param string $worker_name
+     * @return resource
+     */
+    protected function getSocketContext($worker_name)
+    {
+        $context = null;
+        // 根据手册5.3.3之前版本stream_socket_server 不支持 backlog 选项
+        if(version_compare(PHP_VERSION, '5.3.3') < 0)
+        {
+            return $context;
+        }
+        // 读取worker的backlog
+        $backlog = (int)Lib\Config::get($worker_name . '.backlog');
+        // 没有设置或者不合法则尝试使用workerman.conf中的backlog设置
+        if($backlog <= 0)
+        {
+            $backlog = (int)Lib\Config::get('workerman.backlog');
+        }
+        // 都没设置backlog，使用默认值
+        if($backlog <= 0)
+        {
+            $backlog = self::DEFAULT_BACKLOG;
+        }
+        // backlog选项
+        $opts = array(
+            'socket' => array(
+                'backlog' => $backlog,
+            ),
+        );
+        // 返回上下文
+        $context = stream_context_create($opts);
+        return $context;
+    }
+    
+    /**
      * notice,记录到日志
      * @param string $msg
      * @param bool $display
@@ -915,10 +966,10 @@ class Master
      */
     public static function notice($msg, $display = false)
     {
-        Lib\Log::add("Server:".$msg);
+        Lib\Log::add("Server:".trim($msg));
         if($display)
         {
-            if(self::$serviceStatus == self::STATUS_STARTING)
+            if(self::$serviceStatus == self::STATUS_STARTING && @posix_ttyname(STDOUT))
             {
                 echo($msg."\n");
             }
