@@ -5,7 +5,7 @@ namespace Lib\StoreDriver;
  * 
  * 这里用php数组文件来存储数据，
  * 为了获取高性能需要用类似memcache的存储
- * @author walkor <workerman.net>
+ * @author walkor <walkor@workerman.net>
  * 
  */
 
@@ -20,9 +20,6 @@ class File
     // 打开文件的句柄
     protected $dataFileHandle = null;
     
-    // 缓存过期时间
-    const CACHE_EXP_TIME = 1;
-    
     /**
      * 构造函数
      * @param 配置名 $config_name
@@ -30,18 +27,25 @@ class File
     public function __construct($config_name)
     {
         $this->dataFile = \Config\Store::$storePath . "/$config_name.store.cache.php";
-        if(!is_dir(\Config\Store::$storePath) && !mkdir(\Config\Store::$storePath, 0777, true))
+        if(!is_dir(\Config\Store::$storePath) && !@mkdir(\Config\Store::$storePath, 0777, true))
         {
-            throw new \Exception('cant not mkdir('.\Config\Store::$storePath.')');
+            // 可能目录已经被其它进程创建
+            clearstatcache();
+            if(!is_dir(\Config\Store::$storePath))
+            {
+                // 避免狂刷日志
+                sleep(1);
+                throw new \Exception('cant not mkdir('.\Config\Store::$storePath.')');
+            }
         }
         if(!is_file($this->dataFile))
         {
             touch($this->dataFile);
         }
-        $this->dataFileHandle = fopen($this->dataFile, 'r+');
+        $this->dataFileHandle = fopen(__FILE__, 'r');
         if(!$this->dataFileHandle)
         {
-            throw new \Exception("can not fopen($this->dataFile, 'r+')");
+            throw new \Exception("can not fopen($this->dataFile, 'r')");
         }
     }
     
@@ -70,12 +74,9 @@ class File
      */
     public function get($key, $use_cache = true)
     {
-        if(!$use_cache || time() - $this->lastCacheTime > self::CACHE_EXP_TIME)
-        {
-            flock($this->dataFileHandle, LOCK_EX);
-            $this->readDataFromDisk();
-            flock($this->dataFileHandle, LOCK_UN);
-        }
+        flock($this->dataFileHandle, LOCK_EX);
+        $this->readDataFromDisk();
+        flock($this->dataFileHandle, LOCK_UN);
         return isset($this->dataCache[$key]) ? $this->dataCache[$key] : null;
     }
    
@@ -92,6 +93,34 @@ class File
         $ret = $this->writeToDisk();
         flock($this->dataFileHandle, LOCK_UN);
         return $ret;
+    }
+    
+    /**
+     * 自增
+     * @param string $key
+     * @return boolean|multitype:
+     */
+    public function increment($key)
+    {
+        flock($this->dataFileHandle, LOCK_EX);
+        $this->readDataFromDisk();
+        if(!isset($this->dataCache[$key]))
+        {
+            flock($this->dataFileHandle, LOCK_UN);
+            return false;
+        }
+        $this->dataCache[$key] ++;
+        $this->writeToDisk();
+        flock($this->dataFileHandle, LOCK_UN);
+        return $this->dataCache[$key];
+    }
+    
+    /**
+     * 清零销毁存储数据
+     */
+    public function destroy()
+    {
+        @unlink($this->dataFile);
     }
     
     /**

@@ -5,7 +5,7 @@
  * 1、监听客户端连接
  * 2、监听后端回应并转发回应给前端
  * 
- * @author walkor <workerman.net>
+ * @author walkor <walkor@workerman.net>
  * 
  */
 require_once __DIR__ . '/../Lib/Autoloader.php';
@@ -40,22 +40,28 @@ class Gateway extends Man\Core\SocketWorker
     protected $lanPort = 0;
     
     /**
-     * uid到连接的映射
+     * client_id到连接的映射
      * @var array
      */
-    protected $uidConnMap = array();
+    protected $clientConnMap = array();
     
     /**
-     * 连接到uid的映射
+     * 连接到client_id的映射
      * @var array
      */
-    protected $connUidMap = array();
+    protected $connClientMap = array();
     
     /**
-     * uid到session的映射
+     * 客户端链接和客户端远程地址映射
      * @var array
      */
-    protected $socketSessionMap = array();
+    protected $connRemoteAddressMap = array();
+    
+    /**
+     * client_id到session的映射
+     * @var array
+     */
+    protected $connSessionMap = array();
     
     /**
      * 与worker的连接
@@ -65,6 +71,12 @@ class Gateway extends Man\Core\SocketWorker
     protected $workerConnections = array();
     
     /**
+     * 客户端心跳信息
+     * [client_id=>not_response_count, client_id=>not_response_count, ..]
+     */
+    protected $pingInfo = array();
+    
+    /**
      * gateway 发送心跳时间间隔 单位：秒 ,0表示不发送心跳，在配置中设置
      * @var integer
      */
@@ -72,12 +84,16 @@ class Gateway extends Man\Core\SocketWorker
     
     /**
      * 心跳数据
-     * 可以是字符串（在配置中直接设置字符串如 ping_data=ping），
      * 可以是二进制数据(二进制数据保存在文件中，在配置中设置ping数据文件路径 如 ping_data=/yourpath/ping.bin)
-     * ping数据应该是客户端能够识别的数据格式，只是检测连接的连通性，客户端收到心跳数据可以选择忽略此数据包
+     * ping数据应该是客户端能够识别的数据格式，客户端必须回复心跳，不然链接会断开
      * @var string
      */
     protected $pingData = '';
+    
+    /**
+     * 客户端连续$pingNotResponseLimit次不回应心跳则断开链接
+     */
+    protected $pingNotResponseLimit = 0;
     
     /**
      * 命令字，统计用到
@@ -85,67 +101,43 @@ class Gateway extends Man\Core\SocketWorker
      */
     protected static $interfaceMap = array(
             GatewayProtocol::CMD_SEND_TO_ONE             => 'CMD_SEND_TO_ONE',
-            GatewayProtocol::CMD_KICK                              => 'CMD_KICK',
-            GatewayProtocol::CMD_SEND_TO_ALL               => 'CMD_SEND_TO_ALL',
-            GatewayProtocol::CMD_CONNECT_SUCCESS     => 'CMD_CONNECT_SUCCESS',
-            GatewayProtocol::CMD_UPDATE_SESSION        => 'CMD_UPDATE_SESSION',
-            GatewayProtocol::CMD_GET_ONLINE_STATUS  => 'CMD_GET_ONLINE_STATUS',
-            GatewayProtocol::CMD_IS_ONLINE                    => 'CMD_IS_ONLINE',
-            GatewayProtocol::CMD_ON_GATEWAY_CONNECTION    => 'CMD_ON_GATEWAY_CONNECTION',
+            GatewayProtocol::CMD_SEND_TO_ALL             => 'CMD_SEND_TO_ALL',
+            GatewayProtocol::CMD_KICK                    => 'CMD_KICK',
+            GatewayProtocol::CMD_UPDATE_SESSION          => 'CMD_UPDATE_SESSION',
+            GatewayProtocol::CMD_GET_ONLINE_STATUS       => 'CMD_GET_ONLINE_STATUS',
+            GatewayProtocol::CMD_IS_ONLINE               => 'CMD_IS_ONLINE',
      );
     
     /**
      * 由于网络延迟或者socket缓冲区大小的限制，客户端发来的数据可能不会都全部到达，需要根据协议判断数据是否完整
      * @see Man\Core.SocketWorker::dealInput()
      */
-    public function dealInput($recv_str)
+    public function dealInput($recv_buffer)
     {
-        // 如果有Event::onGatewayMessage方法通过这个方法检查数据是否接收完整
-        if(method_exists('Event','onGatewayMessage'))
-        {
-            return call_user_func_array(array('Event', 'onGatewayMessage'), array($recv_str));
-        }
-        return 0;
+        // 处理粘包
+        return Event::onGatewayMessage($recv_buffer);
     }
     
     /**
      * 用户客户端发来消息时处理
      * @see Man\Core.SocketWorker::dealProcess()
      */
-    public function dealProcess($recv_str)
+    public function dealProcess($recv_buffer)
     {
-        // 判断用户是否认证过
-        StatisticClient::tick();
-        $from_uid = $this->getUidByFd($this->currentDealFd);
-        $module = __CLASS__;
-        $success = 1;
-        $code = 0;
-        $msg = '';
-        // 触发ON_CONNECTION
-        if(!$from_uid)
+        // 客户端发来任何一个完整的包都视为回应了服务端发的心跳
+        if(!empty($this->pingInfo[$this->connClientMap[$this->currentDealFd]]))
         {
-            $interface = 'ON_CONNECTION';
-            $ret = $this->sendToWorker(GatewayProtocol::CMD_ON_CONNECTION, $this->currentDealFd, $recv_str);
-            if($ret === false)
-            {
-                $success = 0;
-                $msg = 'sendToWorker(CMD_ON_CONNECTION, '.$this->currentDealFd.', strlen($recv_str) = '.strlen($recv_str).') fail ';
-                $code = 101;
-            }
+            $this->pingInfo[$this->connClientMap[$this->currentDealFd]] = 0;
         }
-        else
+        
+        // 统计打点
+        StatisticClient::tick(__CLASS__, 'CMD_ON_MESSAGE');
+        // 触发ON_MESSAGE
+        if(false === $this->sendToWorker(GatewayProtocol::CMD_ON_MESSAGE, $this->currentDealFd, $recv_buffer))
         {
-            // 认证过, 触发ON_MESSAGE
-            $interface = 'CMD_ON_MESSAGE';
-            $ret =$this->sendToWorker(GatewayProtocol::CMD_ON_MESSAGE, $this->currentDealFd, $recv_str);
-            if($ret === false)
-            {
-                $success = 0;
-                $msg = 'sendToWorker(CMD_ON_MESSAGE, '.$this->currentDealFd.', strlen($recv_str) = '.strlen($recv_str).') fail ';
-                $code = 102;
-            }
+            return StatisticClient::report(__CLASS__, 'CMD_ON_MESSAGE', 0, 132, __CLASS__.'::dealProcess()->sendToWorker() fail');
         }
-        StatisticClient::report($module, $interface, $success, $code, $msg);
+        StatisticClient::report(__CLASS__, 'CMD_ON_MESSAGE', 1, 0, '');
     }
     
     /**
@@ -162,7 +154,20 @@ class Gateway extends Man\Core\SocketWorker
         // 创建内部通信套接字，用于与BusinessWorker通讯
         $start_port = Man\Core\Lib\Config::get($this->workerName.'.lan_port_start');
         // 计算本进程监听的ip端口
-        $this->lanPort = $start_port - posix_getppid() + posix_getpid();
+        if(strpos(\Man\Core\Master::VERSION, 'mt'))
+        {
+            $this->lanPort = $start_port + \Thread::getCurrentThreadId()%100;
+        }
+        else 
+        {
+            $this->lanPort = $start_port - posix_getppid() + posix_getpid();
+        }
+        // 如果端口不在合法范围
+        if($this->lanPort<0 || $this->lanPort >=65535)
+        {
+            $this->lanPort = rand($start_port, 65535);
+        }
+        // 如果
         $this->lanIp = Man\Core\Lib\Config::get($this->workerName.'.lan_ip');
         if(!$this->lanIp)
         {
@@ -187,11 +192,15 @@ class Gateway extends Man\Core\SocketWorker
         }
         
         // 注册套接字
-        $this->registerAddress($this->lanIp.':'.$this->lanPort);
+        if(!$this->registerAddress($this->lanIp.':'.$this->lanPort))
+        {
+            $this->notice('registerAddress fail and exit');
+            $this->stop();
+        }
         
         // 添加读udp/tcp事件
-        $this->event->add($this->innerMainSocketUdp,  Man\Core\Events\BaseEvent::EV_READ, array($this, 'recvUdp'));
-        $this->event->add($this->innerMainSocketTcp,  Man\Core\Events\BaseEvent::EV_READ, array($this, 'acceptTcp'));
+        $this->event->add($this->innerMainSocketUdp,  Man\Core\Events\BaseEvent::EV_READ, array($this, 'recvInnerUdp'));
+        $this->event->add($this->innerMainSocketTcp,  Man\Core\Events\BaseEvent::EV_READ, array($this, 'acceptInnerTcp'));
         
         // 初始化心跳包时间间隔
         $ping_interval = \Man\Core\Lib\Config::get($this->workerName.'.ping_interval');
@@ -211,8 +220,11 @@ class Gateway extends Man\Core\SocketWorker
             $this->pingData = $ping_data_or_path;
         }
         
+        // 不返回心跳回应（客户端发来的任何数据都算是回应）的限定值
+        $this->pingNotResponseLimit = (int)\Man\Core\Lib\Config::get($this->workerName.'.ping_not_response_limit');
+        
         // 设置定时任务，发送心跳
-        if($this->pingInterval > 0 && $this->pingData)
+        if($this->pingInterval > 0)
         {
             \Man\Core\Lib\Task::init($this->event);
             \Man\Core\Lib\Task::add($this->pingInterval, array($this, 'ping'));
@@ -225,6 +237,7 @@ class Gateway extends Man\Core\SocketWorker
         // 执行到就退出
         exit(0);
     }
+    
     
     /**
      * 接受一个链接
@@ -248,14 +261,48 @@ class Gateway extends Man\Core\SocketWorker
         $fd = (int) $new_connection;
         $this->connections[$fd] = $new_connection;
         $this->recvBuffers[$fd] = array('buf'=>'', 'remain_len'=>$this->prereadLength);
-        $this->socketSessionMap[$fd] = '';
+        $this->connSessionMap[$fd] = '';
  
         // 非阻塞
         stream_set_blocking($this->connections[$fd], 0);
         $this->event->add($this->connections[$fd], Man\Core\Events\BaseEvent::EV_READ , array($this, 'dealInputBase'), $fd);
         
+        // 全局唯一client_id
+        $global_client_id = $this->createGlobalClientId();
+        $this->clientConnMap[$global_client_id] = $fd;
+        $this->connClientMap[$fd] = $global_client_id;
+        $address = array('local_ip'=>$this->lanIp, 'local_port'=>$this->lanPort, 'socket_id'=>$fd);
+        
+        // 保存客户端内部通讯地址
+        $this->storeClientAddress($global_client_id, $address);
+        
+        // 客户端保存 ip:port
+        $address= $this->getRemoteAddress($fd);
+        if($address)
+        {
+            list($client_ip, $client_port) = explode(':', $address, 2);
+        }
+        else
+        {
+            $client_ip = 0;
+            $client_port = 0;
+        }
+        $this->connRemoteAddressMap[$fd] = array('ip'=>$client_ip, 'port'=>$client_port);
+        
         // 触发GatewayOnConnection事件
-        $this->sendToWorker(GatewayProtocol::CMD_ON_GATEWAY_CONNECTION, $fd);
+        if(method_exists('Event','onGatewayConnect'))
+        {
+            // 统计打点
+            StatisticClient::tick(__CLASS__, 'CMD_ON_GATEWAY_CONNECTION');
+            if(false === $this->sendToWorker(GatewayProtocol::CMD_ON_GATEWAY_CONNECTION, $fd))
+            {
+                StatisticClient::report(__CLASS__, 'CMD_ON_GATEWAY_CONNECTION', 0, 131, __CLASS__.'::accept()->sendToWorker() fail');
+            }
+            else
+            {
+                StatisticClient::report(__CLASS__, 'CMD_ON_GATEWAY_CONNECTION', 1, 0, '');
+            }
+        }
         
         return $new_connection;
     }
@@ -266,17 +313,49 @@ class Gateway extends Man\Core\SocketWorker
      */
     protected function registerAddress($address)
     {
-        // 这里使用了信号量只能实现单机互斥，分布式互斥需要借助于memcache incr 或者其他分布式存储
+        // 统计打点
+        StatisticClient::tick(__CLASS__, 'registerAddress');
+        // 这里使用了信号量只能实现单机互斥，分布式互斥需要借助于memcached incr cas 或者其他分布式存储
         \Man\Core\Lib\Mutex::get();
+        // key
         $key = 'GLOBAL_GATEWAY_ADDRESS';
-        $addresses_list = Store::instance('gateway')->get($key);
+        // 获取实例
+        try 
+        {
+            $store = Store::instance('gateway');
+        }
+        catch(\Exception $msg)
+        {
+            StatisticClient::report(__CLASS__, 'registerAddress', 0, 107, $msg);
+            \Man\Core\Lib\Mutex::release();
+            return false;
+        }
+        // 获取数据
+        $addresses_list = $store->get($key);
         if(empty($addresses_list))
         {
             $addresses_list = array();
         }
+        // 添加数据
         $addresses_list[$address] = $address;
-        Store::instance('gateway')->set($key, $addresses_list);
+        // 存储
+        if(!$store->set($key, $addresses_list))
+        {
+            // 存储失败
+            \Man\Core\Lib\Mutex::release();
+            $msg = "注册gateway通信地址出错";
+            if(get_class($store) == 'Memcached')
+            {
+                $msg .= " 原因:".$store->getResultMessage();
+            }
+            $this->notice($msg);
+            StatisticClient::report(__CLASS__, 'registerAddress', 0, 107, new \Exception($msg));
+            return false;
+        }
+        // 存储成功
         \Man\Core\Lib\Mutex::release();
+        StatisticClient::report(__CLASS__, 'registerAddress', 1, 0, '');
+        return true;
     }
     
     /**
@@ -285,17 +364,47 @@ class Gateway extends Man\Core\SocketWorker
      */
     protected function unregisterAddress($address)
     {
-        // 这里使用了信号量只能实现单机互斥，分布式互斥需要借助于memcache incr 或者其他分布式存储
+        // 统计打点
+        StatisticClient::tick(__CLASS__, 'unregisterAddress');
+        // 这里使用了信号量只能实现单机互斥，分布式互斥需要借助于memcached incr cas或者其他分布式存储
         \Man\Core\Lib\Mutex::get();
+        // key
         $key = 'GLOBAL_GATEWAY_ADDRESS';
-        $addresses_list = Store::instance('gateway')->get($key);
+        // 获取存储实例
+        try 
+        {
+            $store = Store::instance('gateway');
+        }
+        catch (\Exception $msg)
+        {
+            StatisticClient::report(__CLASS__, 'unregisterAddress', 0, 108, $msg);
+            \Man\Core\Lib\Mutex::release();
+            return false;
+        }
+        // 获取数据
+        $addresses_list = $store->get($key);
         if(empty($addresses_list))
         {
             $addresses_list = array();
         }
+        // 去掉要删除的数据
         unset($addresses_list[$address]);
-        Store::instance('gateway')->set($key, $addresses_list);
+        // 保存数据
+        if(!$store->set($key, $addresses_list))
+        {
+            \Man\Core\Lib\Mutex::release();
+            $msg = "删除gateway通信地址出错";
+            if(get_class($store) == 'Memcached')
+            {
+                $msg .= " 原因:".$store->getResultMessage();
+            }
+            $this->notice($msg);
+            StatisticClient::report(__CLASS__, 'unregisterAddress', 0, 108, new \Exception($msg));
+            return;
+        }
+        // 存储成功
         \Man\Core\Lib\Mutex::release();
+        StatisticClient::report(__CLASS__, 'unregisterAddress', 1, 0, '');
     }
     
     /**
@@ -306,7 +415,7 @@ class Gateway extends Man\Core\SocketWorker
      * @param $null_two $base
      * @return void
      */
-    public function recvUdp($socket, $null_one = null, $null_two = null)
+    public function recvInnerUdp($socket, $null_one = null, $null_two = null)
     {
         $data = stream_socket_recvfrom($socket , self::MAX_UDP_PACKEG_SIZE, 0, $address);
         // 惊群效应
@@ -326,7 +435,7 @@ class Gateway extends Man\Core\SocketWorker
      * @param null $null_one
      * @param null $null_two
      */
-    public function acceptTcp($socket, $null_one = null, $null_two = null)
+    public function acceptInnerTcp($socket, $null_one = null, $null_two = null)
     {
         // 获得一个连接
         $new_connection = @stream_socket_accept($socket, 0);
@@ -342,7 +451,8 @@ class Gateway extends Man\Core\SocketWorker
     
         // 非阻塞
         stream_set_blocking($this->connections[$fd], 0);
-        $this->event->add($this->connections[$fd], \Man\Core\Events\BaseEvent::EV_READ , array($this, 'recvTcp'), $fd);
+        $this->event->add($this->connections[$fd], \Man\Core\Events\BaseEvent::EV_READ , array($this, 'recvInnerTcp'), $fd);
+        
         // 标记这个连接是内部通讯长连接，区别于客户端连接
         $this->workerConnections[$fd] = $fd;
         return $new_connection;
@@ -358,18 +468,19 @@ class Gateway extends Man\Core\SocketWorker
     }
     
     /**
-     * 处理受到的数据
+     * 处理内部通讯收到的数据
      * @param event_buffer $event_buffer
      * @param int $fd
      * @return void
      */
-    public function recvTcp($connection, $flag, $fd = null)
+    public function recvInnerTcp($connection, $flag, $fd = null)
     {
         $this->currentDealFd = $fd;
         $buffer = stream_socket_recvfrom($connection, $this->recvBuffers[$fd]['remain_len']);
         // 出错了
         if('' == $buffer && '' == ($buffer = fread($connection, $this->recvBuffers[$fd]['remain_len'])))
         {
+            // 判断是否是链接断开
             if(!feof($connection))
             {
                 return;
@@ -379,11 +490,12 @@ class Gateway extends Man\Core\SocketWorker
             if(!empty($this->recvBuffers[$fd]['buf']))
             {
                 $this->statusInfo['send_fail']++;
-                $this->notice("INNER_CLIENT_CLOSE\nCLIENT_IP:".$this->getRemoteIp()."\nBUFFER:[".var_export($this->recvBuffers[$fd]['buf'],true)."]\n");
             }
     
             // 关闭链接
             $this->closeInnerClient($fd);
+            $this->notice("CLIENT:".$this->getRemoteIp()." CLOSE INNER_CONNECTION\n");
+            
             if($this->workerStatus == self::STATUS_SHUTDOWN)
             {
                 $this->stop();
@@ -397,16 +509,8 @@ class Gateway extends Man\Core\SocketWorker
         // 包接收完毕
         if(0 === $remain_len)
         {
-            // 执行处理
-            try{
-                // 内部通讯业务处理
-                $this->innerDealProcess($this->recvBuffers[$fd]['buf']);
-            }
-            catch(\Exception $e)
-            {
-                $this->notice('CODE:' . $e->getCode() . ' MESSAGE:' . $e->getMessage()."\n".$e->getTraceAsString()."\nCLIENT_IP:".$this->getRemoteIp()."\nBUFFER:[".var_export($this->recvBuffers[$fd]['buf'],true)."]\n");
-                $this->statusInfo['throw_exception'] ++;
-            }
+            // 内部通讯业务处理
+            $this->innerDealProcess($this->recvBuffers[$fd]['buf']);
             $this->recvBuffers[$fd] = array('buf'=>'', 'remain_len'=>GatewayProtocol::HEAD_LEN);
         }
         // 出错
@@ -414,7 +518,7 @@ class Gateway extends Man\Core\SocketWorker
         {
             // 出错
             $this->statusInfo['packet_err']++;
-            $this->notice("INNER_PACKET_ERROR\nCLIENT_IP:".$this->getRemoteIp()."\nBUFFER:[".var_export($this->recvBuffers[$fd]['buf'],true)."]\n");
+            $this->notice("INNER_PACKET_ERROR and CLOSE_INNER_CONNECTION\nCLIENT_IP:".$this->getRemoteIp()."\nBUFFER:[".bin2hex($this->recvBuffers[$fd]['buf'])."]\n");
             $this->closeInnerClient($fd);
         }
         else
@@ -434,41 +538,39 @@ class Gateway extends Man\Core\SocketWorker
 
     /**
      * 内部通讯处理
-     * @param string $recv_str
+     * @param string $recv_buffer
      */
-    public function innerDealProcess($recv_str)
+    public function innerDealProcess($recv_buffer)
     {
-        $pack = new GatewayProtocol($recv_str);
+        $pack = new GatewayProtocol($recv_buffer);
         $cmd = $pack->header['cmd'];
-        StatisticClient::tick();
-        $module = __CLASS__;
-        $interface = isset(self::$interfaceMap[$cmd]) ? self::$interfaceMap[$cmd] : 'null';
-        $success = 1;
-        $code = 0;
-        $msg = '';
+        $interface = isset(self::$interfaceMap[$cmd]) ? self::$interfaceMap[$cmd] : $cmd;
+        StatisticClient::tick(__CLASS__, $interface);
         try
         {
             switch($cmd)
             {
+                // 向某客户端发送数据
                 case GatewayProtocol::CMD_SEND_TO_ONE:
-                    $this->sendToSocketId($pack->header['socket_id'], $pack->body);
-                    break;
-                case GatewayProtocol::CMD_KICK:
-                    if($pack->body)
+                    if(false === $this->sendToSocketId($pack->header['socket_id'], $pack->body))
                     {
-                        $this->sendToSocketId($pack->header['socket_id'], $pack->body);
+                        throw new \Exception('发送数据到客户端失败，可能是该客户端的发送缓冲区已满，或者客户端已经下线', 121);
                     }
-                    $this->closeClientBySocketId($pack->header['socket_id']);
                     break;
+                // 踢掉客户端
+                case GatewayProtocol::CMD_KICK:
+                    $this->closeClient($pack->header['socket_id']);
+                    break;
+                // 向所客户端发送数据
                 case GatewayProtocol::CMD_SEND_TO_ALL:
                     if($pack->ext_data)
                     {
-                        $uid_array = unpack('N*', $pack->ext_data);
-                        foreach($uid_array as $uid)
+                        $client_id_array = unpack('N*', $pack->ext_data);
+                        foreach($client_id_array as $client_id)
                         {
-                            if(isset($this->uidConnMap[$uid]))
+                            if(isset($this->clientConnMap[$client_id]))
                             {
-                                $this->sendToSocketId($this->uidConnMap[$uid], $pack->body);
+                                $this->sendToSocketId($this->clientConnMap[$client_id], $pack->body);
                             }
                         }
                     }
@@ -477,35 +579,35 @@ class Gateway extends Man\Core\SocketWorker
                         $this->broadCast($pack->body);
                     }
                     break;
-                case GatewayProtocol::CMD_CONNECT_SUCCESS:
-                    $this->connectSuccess($pack->header['socket_id'], $pack->header['uid']);
-                    break;
+                // 更新某个客户端的session
                 case GatewayProtocol::CMD_UPDATE_SESSION:
-                    if(isset($this->socketSessionMap[$pack->header['socket_id']]))
+                    if(isset($this->connSessionMap[$pack->header['socket_id']]))
                     {
-                        $this->socketSessionMap[$pack->header['socket_id']] = $pack->ext_data;
+                        $this->connSessionMap[$pack->header['socket_id']] = $pack->ext_data;
                     }
                     break;
+                // 获得在线状态
                 case GatewayProtocol::CMD_GET_ONLINE_STATUS:
-                    $online_status = json_encode(array_values($this->connUidMap));
+                    $online_status = json_encode(array_values($this->connClientMap));
                     stream_socket_sendto($this->innerMainSocketUdp, $online_status, 0, $this->currentClientAddress);
                     break;
+                // 判断某个客户端id是否在线
                 case GatewayProtocol::CMD_IS_ONLINE:
-                    stream_socket_sendto($this->innerMainSocketUdp, (int)isset($this->uidConnMap[$pack->header['uid']]), 0, $this->currentClientAddress);
+                    stream_socket_sendto($this->innerMainSocketUdp, (int)isset($this->clientConnMap[$pack->header['client_id']]), 0, $this->currentClientAddress);
                     break;
+                // 未知的命令
                 default :
                     $err_msg = "gateway inner pack err cmd=$cmd";
                     $this->notice($err_msg);
-                    throw new \Exception($err_msg, 501);
+                    throw new \Exception($err_msg, 110);
             }
         }
-        catch(\Exception $e)
+        catch(\Exception $msg)
         {
-            $success = 0;
-            $code = $e->getCode() > 0 ? $e->getCode() : 500; 
-            $msg = $e->__toString();
+            StatisticClient::report(__CLASS__, $interface, 0, $msg->getCode() > 0 ? $msg->getCode() : 111, $msg);
+            return;
         }
-        StatisticClient::report($module, $interface, $success, $code, $msg);
+        StatisticClient::report(__CLASS__, $interface, 1, 0, '');
     }
     
     /**
@@ -514,76 +616,40 @@ class Gateway extends Man\Core\SocketWorker
      */
     protected function broadCast($bin_data)
     {
-        foreach($this->uidConnMap as $uid=>$conn)
+        foreach($this->clientConnMap as $client_id=>$conn)
         {
             $this->sendToSocketId($conn, $bin_data);
         }
     }
     
     /**
-     * 根据socket_id关闭与客户端的连接，实际上是踢人操作
-     * @param int $socket_id
+     * 根据client_id获取client_id对应连接的socket_id
+     * @param int $client_id
      */
-    protected function closeClientBySocketId($socket_id)
+    protected function getFdByClientId($client_id)
     {
-        if($uid = $this->getUidByFd($socket_id))
+        if(isset($this->clientConnMap[$client_id]))
         {
-            unset($this->uidConnMap[$uid]);
-        }
-        unset($this->connUidMap[$socket_id], $this->socketSessionMap[$socket_id]);
-        parent::closeClient($socket_id);
-    }
-    
-    /**
-     * 根据uid获取uid对应连接的id
-     * @param int $uid
-     */
-    protected function getFdByUid($uid)
-    {
-        if(isset($this->uidConnMap[$uid]))
-        {
-            return $this->uidConnMap[$uid];
+            return $this->clientConnMap[$client_id];
         }
         return 0;
     }
     
     /**
-     * 根据连接id获取用户uid
+     * 根据连接socket_id获取client_id
      * @param int $fd
      */
-    protected function getUidByFd($fd)
+    protected function getClientIdByFd($fd)
     {
-        if(isset($this->connUidMap[$fd]))
+        if(isset($this->connClientMap[$fd]))
         {
-            return $this->connUidMap[$fd];
+            return $this->connClientMap[$fd];
         }
         return 0;
     }
     
     /**
-     * BusinessWorker通知本Gateway进程$uid用户合法，绑定到$socket_id
-     * 后面这个socketid再有消息传来，会自动带上uid传递给BusinessWorker
-     * @param int $socket_id
-     * @param int $uid
-     */
-    protected function connectSuccess($socket_id, $uid)
-    {
-        if($binded_uid = $this->getUidByFd($socket_id))
-        {
-            $this->notice('notify connection fail socket:' . $socket_id . ' already binded uid:' . $binded_uid);
-            return;
-        }
-        if($binded_socket = $this->getFdByUid($uid))
-        {
-            $this->notice('notify connection warning uid:' . $uid . ' already binded socket:' . $binded_socket);
-            $this->closeClient($binded_socket);
-        }
-        $this->uidConnMap[$uid] = $socket_id;
-        $this->connUidMap[$socket_id] = $uid;
-    }
-    
-    /**
-     * 向某个socketId的连接发送消息
+     * 向某个socket_id的连接发送消息
      * @param int $socket_id
      * @param string $bin_data
      */
@@ -591,27 +657,26 @@ class Gateway extends Man\Core\SocketWorker
     {
         if(!isset($this->connections[$socket_id]))
         {
-            return false;
+            return null;
         }
         $this->currentDealFd = $socket_id;
         return $this->sendToClient($bin_data);
     }
 
     /**
-     * 用户客户端主动关闭连接触发
+     * 用户客户端关闭连接时触发
      * @see Man\Core.SocketWorker::closeClient()
      */
-    protected function closeClient($fd)
+    protected function closeClient($fd = null)
     {
-        StatisticClient::tick();
-        if($uid = $this->getUidByFd($fd))
+        if($client_id = $this->getClientIdByFd($fd))
         {
             $this->sendToWorker(GatewayProtocol::CMD_ON_CLOSE, $fd);
-            unset($this->uidConnMap[$uid]);
+            $this->deleteClientAddress($client_id);
+            unset($this->clientConnMap[$client_id]);
         }
-        unset($this->connUidMap[$fd], $this->socketSessionMap[$fd]);
+        unset($this->connClientMap[$fd], $this->connSessionMap[$fd], $this->connRemoteAddressMap[$fd]);
         parent::closeClient($fd);
-        StatisticClient::report(__CLASS__, 'CMD_ON_CLOSE', 1, 0, '');
     }
     
     /**
@@ -632,26 +697,16 @@ class Gateway extends Man\Core\SocketWorker
      */
     protected function sendToWorker($cmd, $socket_id, $body = '')
     {
-        $address= $this->getRemoteAddress($socket_id);
-        if($address)
-        {
-            list($client_ip, $client_port) = explode(':', $address, 2);
-        }
-        else
-        {
-            $client_ip = 0;
-            $client_port = 0;
-        }
         $pack = new GatewayProtocol();
         $pack->header['cmd'] = $cmd;
         $pack->header['local_ip'] = $this->lanIp;
         $pack->header['local_port'] = $this->lanPort;
         $pack->header['socket_id'] = $socket_id;
-        $pack->header['client_ip'] = $client_ip;
-        $pack->header['client_port'] = $client_ip;
-        $pack->header['uid'] = $this->getUidByFd($socket_id);
+        $pack->header['client_ip'] = $this->connRemoteAddressMap[$socket_id]['ip'];
+        $pack->header['client_port'] = $this->connRemoteAddressMap[$socket_id]['port'];
+        $pack->header['client_id'] = $this->getClientIdByFd($socket_id);
         $pack->body = $body;
-        $pack->ext_data = $this->socketSessionMap[$pack->header['socket_id']];
+        $pack->ext_data = $this->connSessionMap[$pack->header['socket_id']];
         return $this->sendBufferToWorker($pack->getBuffer());
     }
     
@@ -663,8 +718,22 @@ class Gateway extends Man\Core\SocketWorker
     {
         if($this->currentDealFd = array_rand($this->workerConnections))
         {
-            return $this->sendToClient($bin_data);
+             if(false === $this->sendToClient($bin_data))
+             {
+                 $msg = "sendBufferToWorker fail. May be the send buffer are overflow";
+                 $this->notice($msg);
+                 StatisticClient::report(__CLASS__, 'sendBufferToWorker', 0, 101, new \Exception($msg));
+                 return false;
+             }
         }
+        else
+        {
+            $msg = "sendBufferToWorker fail. the Connections between Gateway and BusinessWorker are not ready";
+            $this->notice($msg);
+            StatisticClient::report(__CLASS__, 'sendBufferToWorker', 0, 102, new \Exception($msg));
+            return false;
+        }
+        StatisticClient::report(__CLASS__, 'sendBufferToWorker', 1, 0, '');
     }
     
     /**
@@ -673,7 +742,7 @@ class Gateway extends Man\Core\SocketWorker
      */
     protected function notice($str, $display=true)
     {
-        $str = 'Worker['.get_class($this).']:'."$str ip:".$this->getRemoteIp();
+        $str = 'Worker['.get_class($this).']:'."$str";
         Man\Core\Lib\Log::add($str);
         if($display && Man\Core\Lib\Config::get('workerman.debug') == 1)
         {
@@ -682,23 +751,127 @@ class Gateway extends Man\Core\SocketWorker
     }
     
     /**
-     * 进程停止时，清除一些数据
+     * 进程停止时，清除一些数据，忽略错误
      * @see Man\Core.SocketWorker::onStop()
      */
     public function onStop()
     {
         $this->unregisterAddress($this->lanIp.':'.$this->lanPort);
-        foreach($this->connUidMap as $uid)
+        foreach($this->connClientMap as $client_id)
         {
-            Store::instance('gateway')->delete($uid);
+            Store::instance('gateway')->delete($client_id);
         }
     }
     
     /**
-     * 向认证的用户发送心跳数据
+     * 创建全局唯一的id
+     */
+    protected function createGlobalClientId()
+    {
+        StatisticClient::tick(__CLASS__, 'createGlobalClientId');
+        $global_socket_key = 'GLOBAL_SOCKET_ID_KEY';
+        $store = Store::instance('gateway');
+        $global_client_id = $store->increment($global_socket_key);
+        if(!$global_client_id || $global_client_id > 2147483646)
+        {
+            $store->set($global_socket_key, 0);
+            $global_client_id = $store->increment($global_socket_key);
+        }
+        
+        if(!$global_client_id)
+        {
+            $msg = "生成全局client_id出错";
+            if(get_class($store) == 'Memcached')
+            {
+                $msg .= " 原因:".$store->getResultMessage(); 
+            }
+            $this->notice($msg);
+            StatisticClient::report(__CLASS__, 'createGlobalClientId', 0, 104, new \Exception($msg));
+            return $global_client_id;
+        }
+        StatisticClient::report(__CLASS__, 'createGlobalClientId', 1, 0, '');
+        return $global_client_id;
+    }
+    
+    /**
+     * 保存客户端内部通讯地址
+     * @param int $global_client_id
+     * @param string $address
+     */
+    protected function storeClientAddress($global_client_id, $address)
+    {
+        StatisticClient::tick(__CLASS__, 'storeClientAddress');
+        if(!Store::instance('gateway')->set($global_client_id, $address))
+        {
+            $msg = "保存客户端通讯地址出错";
+            if(get_class(Store::instance('gateway')) == 'Memcached')
+            {
+                $msg .= " 原因:".Store::instance('gateway')->getResultMessage();
+            }
+            $this->notice($msg);
+            return StatisticClient::report(__CLASS__, 'storeClientAddress', 0, 105, new \Exception($msg));
+        }
+        StatisticClient::report(__CLASS__, 'storeClientAddress', 1, 0, '');
+    }
+    
+    /**
+     * 删除客户端内部通讯地址
+     * @param int $global_client_id
+     * @param string $address
+     */
+    protected function deleteClientAddress($global_client_id)
+    {
+        StatisticClient::tick(__CLASS__, 'deleteClientAddress');
+        if(!Store::instance('gateway')->delete($global_client_id))
+        {
+            $msg = "删除客户端通讯地址出错";
+            if(get_class(Store::instance('gateway')) == 'Memcached')
+            {
+                $msg .= " 原因:".Store::instance('gateway')->getResultMessage();
+            }
+            $this->notice($msg);
+            return StatisticClient::report(__CLASS__, 'deleteClientAddress', 0, 106, new \Exception($msg));
+        }
+        StatisticClient::report(__CLASS__, 'deleteClientAddress', 1, 0, '');
+    }
+    
+    /**
+     * 向客户端发送心跳数据
+     * 并把规定时间内没回应(客户端发来的任何数据都算是回应)的客户端踢掉
      */
     public function ping()
     {
-        $this->broadCast($this->pingData);
+        // 清理下线的链接
+        foreach($this->pingInfo as $client_id=>$not_response_count)
+        {
+            // 已经下线的忽略
+            if(!isset($this->clientConnMap[$client_id]))
+            {
+                unset($this->pingInfo[$client_id]);
+                continue;
+            }
+            // 上次发送的心跳还没有回复次数大于限定值就断开
+            if($this->pingNotResponseLimit > 0 && $not_response_count >= $this->pingNotResponseLimit)
+            {
+                $this->closeClient($this->clientConnMap[$client_id]);
+            }
+        }
+        // 向所有链接发送心跳数据
+        foreach($this->clientConnMap as $client_id=>$conn)
+        {
+            // 如果没设置ping的数据，则不发送心跳给客户端，但是要求客户端在规定的时间内（ping_interval*ping_not_response_limit）有请求发来，不然会断开
+            if($this->pingData)
+            {
+                $this->sendToSocketId($conn, $this->pingData);
+            }
+            if(isset($this->pingInfo[$client_id]))
+            {
+                $this->pingInfo[$client_id]++;
+            }
+            else
+            {
+                $this->pingInfo[$client_id] = 1;
+            }
+        }
     }
 }
