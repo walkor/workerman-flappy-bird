@@ -1,12 +1,6 @@
 <?php 
 namespace Man\Core;
 
-use \Man\Core\Lib\Task;
-use \Man\Core\Lib\Config;
-use \Man\Core\Lib\Checker;
-use \Man\Core\Lib\Log;
-
-
 if(!defined('WORKERMAN_ROOT_DIR'))
 {
     define('WORKERMAN_ROOT_DIR', realpath(__DIR__."/../../")."/");
@@ -17,11 +11,6 @@ require_once WORKERMAN_ROOT_DIR . 'Core/Lib/Config.php';
 require_once WORKERMAN_ROOT_DIR . 'Core/Lib/Task.php';
 require_once WORKERMAN_ROOT_DIR . 'Core/Lib/Log.php';
 require_once WORKERMAN_ROOT_DIR . 'Core/Lib/Mutex.php';
-require_once WORKERMAN_ROOT_DIR . 'Core/Events/interfaces.php';
-require_once WORKERMAN_ROOT_DIR . 'Core/Events/Select.php';
-require_once WORKERMAN_ROOT_DIR . 'Core/Events/Libevent.php';
-require_once WORKERMAN_ROOT_DIR . 'Core/AbstractWorker.php';
-require_once WORKERMAN_ROOT_DIR . 'Core/SocketWorker.php';
 
 /**
  * 
@@ -44,7 +33,7 @@ class Master
      * 版本
      * @var string
      */
-    const VERSION = '2.1.6';
+    const VERSION = '2.1.4';
     
     /**
      * 服务名
@@ -155,17 +144,6 @@ class Master
     protected static $masterPid = 0;
     
     /**
-     * 终端是否关闭
-     * @var bool
-     */
-    protected static $terminalClosed = false;
-
-    /**
-     * 是否已经重定向了标准输出
-     * @var bool
-     */
-    protected static $hasResetStd = false;
-    /**
      * server统计信息 ['start_time'=>time_stamp, 'worker_exit_code'=>['worker_name1'=>[code1=>count1, code2=>count2,..], 'worker_name2'=>[code3=>count3,...], ..] ]
      * @var array
      */
@@ -182,10 +160,10 @@ class Master
     {
         // 输出信息
         self::notice("Workerman is starting ...", true);
-        // 检查环境
-        self::checkEnv();
         // 初始化
         self::init();
+        // 检查环境
+        self::checkEnv();
         // 变成守护进程
         self::daemonize();
         // 保存进程pid
@@ -201,7 +179,7 @@ class Master
         // 标记服务状态为运行中
         self::$serviceStatus = self::STATUS_RUNNING;
         // 初始化任务
-        Task::init();
+        \Man\Core\Lib\Task::init();
         // 关闭标准输出
         self::resetStdFd();
         // 主循环
@@ -215,17 +193,8 @@ class Master
      */
     public static function init()
     {
-        // 因为子进程要更换用户、开低端口等，必须是root启动
-        if($user_info = posix_getpwuid(posix_getuid()))
-        {
-            if($user_info['name'] !== 'root')
-            {
-                exit("\033[31;40mYou should run workerman as root . Permission denied\033[0m\n");
-            }
-        }
-        
         // 获取配置文件
-        $config_path = Config::$configFile;
+        $config_path = Lib\Config::$configFile;
     
         // 设置进程名称，如果支持的话
         self::setProcTitle(self::NAME.':master with-config:' . $config_path);
@@ -233,9 +202,9 @@ class Master
         // 初始化共享内存消息队列
         if(extension_loaded('sysvmsg') && extension_loaded('sysvshm'))
         {
-            self::$shmId = shm_attach(IPC_KEY, DEFAULT_SHM_SIZE);
-            self::$queueId = msg_get_queue(IPC_KEY);
-            msg_set_queue(self::$queueId,array('msg_qbytes'=>DEFAULT_MSG_QBYTES));
+            self::$shmId = shm_attach(IPC_KEY, DEFAULT_SHM_SIZE, 0666);
+            self::$queueId = msg_get_queue(IPC_KEY, 0666);
+            msg_set_queue(self::$queueId,array('msg_qbytes'=>65535));
         }
     }
     
@@ -246,22 +215,22 @@ class Master
     public static function checkEnv()
     {
         // 检查PID文件
-        Checker::checkPidFile();
+        Lib\Checker::checkPidFile();
         
         // 检查扩展支持情况
-        Checker::checkExtension();
+        Lib\Checker::checkExtension();
         
         // 检查函数禁用情况
-        Checker::checkDisableFunction();
+        Lib\Checker::checkDisableFunction();
         
         // 检查log目录是否可读
-        Log::init();
+        Lib\Log::init();
         
         // 检查配置和语法错误等
-        Checker::checkWorkersConfig();
+        Lib\Checker::checkWorkersConfig();
         
         // 检查文件限制
-        Checker::checkLimit();
+        Lib\Checker::checkLimit();
     }
     
     /**
@@ -291,7 +260,7 @@ class Master
             exit("Setsid fail");
         }
     
-        // 再fork一次，防止在符合SVR4标准的系统下进程再次获得终端
+        // 再fork一次
         $pid2 = pcntl_fork();
         if(-1 == $pid2)
         {
@@ -343,7 +312,7 @@ class Master
     protected static function createListeningSockets()
     {
         // 循环读取配置创建socket
-        foreach (Config::getAllWorkers() as $worker_name=>$config)
+        foreach (Lib\Config::getAllWorkers() as $worker_name=>$config)
         {
             if(isset($config['listen']))
             {
@@ -362,7 +331,7 @@ class Master
                 }
                 if(!self::$listenedSocketsArray[$worker_name])
                 {
-                    Log::add("can not create socket {$config['listen']} info:{$error_no} {$error_msg}\tServer start fail");
+                    Lib\Log::add("can not create socket {$config['listen']} info:{$error_no} {$error_msg}\tServer start fail");
                     exit("\n\033[31;40mCan not create socket {$config['listen']} {$error_msg}\033[0m\n\n\033[31;40mWorkerman start fail\033[0m\n\n");
                 }
             }
@@ -377,7 +346,7 @@ class Master
     protected static function spawnWorkers()
     {
         // 生成一定量的worker进程
-        foreach (Config::getAllWorkers() as $worker_name=>$config)
+        foreach (Lib\Config::getAllWorkers() as $worker_name=>$config)
         {
             // 初始化
             if(empty(self::$workerPidMap[$worker_name]))
@@ -423,16 +392,11 @@ class Master
         // 子进程
         elseif($pid === 0)
         {
-            if($chdir = Config::get($worker_name.".chdir"))
-            {
-                chdir($chdir);
-            }
-            
             // 忽略信号
             self::ignoreSignal();
             
             // 清空任务
-            Task::delAll();
+            Lib\Task::delAll();
             
             // 关闭不用的监听socket
             foreach(self::$listenedSocketsArray as $tmp_worker_name => $tmp_socket)
@@ -444,23 +408,26 @@ class Master
             }
     
             // 尝试以指定用户运行worker进程
-            if($worker_user = Config::get($worker_name . '.user'))
+            if($worker_user = Lib\Config::get($worker_name . '.user'))
             {
                 self::setProcUser($worker_user);
             }
             
             // 关闭输出
-            self::resetStdFd(Config::get($worker_name.'.no_debug'));
+            self::resetStdFd(Lib\Config::get($worker_name.'.no_debug'));
     
             // 尝试设置子进程进程名称
             self::setWorkerProcTitle($worker_name);
     
+            // 包含必要文件
+            require_once WORKERMAN_ROOT_DIR . 'Core/SocketWorker.php';
+            
             // 查找worker文件
-            $worker_file = Config::get($worker_name.'.worker_file');
+            $worker_file = \Man\Core\Lib\Config::get($worker_name.'.worker_file');
             $class_name = basename($worker_file, '.php');
             
             // 如果有语法错误 sleep 5秒 避免狂刷日志
-            if(Checker::checkSyntaxError($worker_file, $class_name))
+            if(\Man\Core\Lib\Checker::checkSyntaxError($worker_file, $class_name))
             {
                 sleep(5);
             }
@@ -554,14 +521,14 @@ class Master
                 break;
             // 平滑重启server信号
             case SIGHUP:
-                Config::reload();
+                Lib\Config::reload();
                 self::notice("Workerman reloading");
                 $pid_worker_name_map = self::getPidWorkerNameMap();
                 $pids_to_restart = array();
                 foreach($pid_worker_name_map as $pid=>$worker_name)
                 {
                     // 如果对应进程配置了不热启动则不重启对应进程
-                    if(Config::get($worker_name.'.no_reload'))
+                    if(Lib\Config::get($worker_name.'.no_reload'))
                     {
                         // 发送reload信号，以便触发onReload方法
                         posix_kill($pid, SIGHUP);
@@ -610,8 +577,6 @@ class Master
             sleep(1);
             // 检查是否有进程退出
             self::checkWorkerExit();
-            // 检查终端是否关闭
-            self::checkTty();
             // 触发信号处理
             pcntl_signal_dispatch();
         }
@@ -640,8 +605,7 @@ class Master
             // 出错
             if($pid < 0)
             {
-                $last_error = function_exists('pcntl_get_last_error') ? pcntl_get_last_error() : 'function pcntl_get_last_error not exists';
-                self::notice('pcntl_waitpid return '.$pid.' and pcntl_get_last_error = ' . $last_error);
+                self::notice('pcntl_waitpid return '.$pid.' and pcntl_get_last_error = ' . pcntl_get_last_error());
                 return $pid;
             }
     
@@ -760,7 +724,7 @@ class Master
             {
                 self::$pidsToRestart[$pid] = time();
                 posix_kill($pid, SIGHUP);
-                Task::add(self::KILL_WORKER_TIME_LONG, array('\Man\Core\Master', 'forceKillWorker'), array($pid), false);
+                Lib\Task::add(self::KILL_WORKER_TIME_LONG, array('\Man\Core\Master', 'forceKillWorker'), array($pid), false);
                 break;
             }
         }
@@ -796,7 +760,7 @@ class Master
         self::$serviceStatus = self::STATUS_SHUTDOWN;
     
         // killWorkerTimeLong 秒后如果还没停止则强制杀死所有进程
-        Task::add(self::KILL_WORKER_TIME_LONG, array('\Man\Core\Master', 'stopAllWorker'), array(true), false);
+        Lib\Task::add(self::KILL_WORKER_TIME_LONG, array('\Man\Core\Master', 'stopAllWorker'), array(true), false);
     
         // 停止所有worker
         self::stopAllWorker();
@@ -893,51 +857,21 @@ class Master
      */
     protected static function resetStdFd($force = false)
     {
-        // 已经重定向了标准输出
-        if(self::$hasResetStd)
-        {
-            return;
-        }
-        // 将标准输出重定向到$stdout_file
-        global $STDOUT, $STDERR;
-        $stdout_file = Config::get('workerman.stdout_file');
-        if($stdout_file)
-        {
-            $handle = fopen($stdout_file,"a");
-            if($handle) 
-            {
-                unset($handle);
-                @fclose(STDOUT);
-                @fclose(STDERR);
-                $STDOUT = fopen($stdout_file,"a");
-                $STDERR = fopen($stdout_file,"a");
-                self::$hasResetStd = true;
-                return;
-            }
-        }
         // 如果此进程配置是no_debug，则关闭输出
         if(!$force)
         {
-            // 没有设置 stdout_file并且debug开启并且终端没有关闭则不关闭标准输出，用于调试
-            if(Config::get('workerman.debug') == 1 && @posix_ttyname(STDOUT))
+            // 开发环境不关闭标准输出，用于调试
+            if(Lib\Config::get('workerman.debug') == 1 && posix_ttyname(STDOUT))
             {
-                return ;
+                return;
             }
         }
+        global $STDOUT, $STDERR;
         @fclose(STDOUT);
         @fclose(STDERR);
-        $STDOUT = fopen('/dev/null',"a");
-        $STDERR = fopen('/dev/null',"a");
-        self::$hasResetStd = true;
-    }
-    
-    /**
-     * 是否已经重置了fd
-     * @return boolean
-     */
-    public static function hasResetFd()
-    {
-        return self::$hasResetStd;
+        // 将标准输出重定向到/dev/null
+        $STDOUT = fopen('/dev/null',"rw+");
+        $STDERR = fopen('/dev/null',"rw+");
     }
     
     /**
@@ -1002,11 +936,11 @@ class Master
             return $context;
         }
         // 读取worker的backlog
-        $backlog = (int)Config::get($worker_name . '.backlog');
+        $backlog = (int)Lib\Config::get($worker_name . '.backlog');
         // 没有设置或者不合法则尝试使用workerman.conf中的backlog设置
         if($backlog <= 0)
         {
-            $backlog = (int)Config::get('workerman.backlog');
+            $backlog = (int)Lib\Config::get('workerman.backlog');
         }
         // 都没设置backlog，使用默认值
         if($backlog <= 0)
@@ -1025,41 +959,6 @@ class Master
     }
     
     /**
-     * 检查控制终端是否已经关闭, 如果控制终端关闭，则停止打印数据到终端
-     * @return void
-     */
-    public static function checkTty()
-    {
-        // 已经重置了fd，就不检查终端是否关闭，因为不会打印东西到屏幕了
-        if(self::$hasResetStd)
-        {
-            return;
-        }
-        // 没开启debug不打印数据到屏幕，不检测终端是否关闭
-        if(!Config::get('workerman.debug'))
-        {
-            return;
-        }
-        // 检测终端是否关闭
-        if(!self::$terminalClosed && !@posix_ttyname(STDOUT))
-        {
-            self::resetStdFd(true);
-            // 日志
-            self::notice("terminal closed and reset workers fd");
-            // 获取所有子进程pid
-            $all_worker_pid = self::getPidWorkerNameMap();
-            // 向所有子进程发送重置标准输入输出信号
-            foreach($all_worker_pid as $pid=>$worker_name)
-            {
-                // 发送SIGTTOU信号
-                posix_kill($pid, SIGTTOU);
-            }
-            // 设置标记
-            self::$terminalClosed = true;
-        }
-    }
-    
-    /**
      * notice,记录到日志
      * @param string $msg
      * @param bool $display
@@ -1067,7 +966,7 @@ class Master
      */
     public static function notice($msg, $display = false)
     {
-        Log::add("Server:".trim($msg));
+        Lib\Log::add("Server:".trim($msg));
         if($display)
         {
             if(self::$serviceStatus == self::STATUS_STARTING && @posix_ttyname(STDOUT))

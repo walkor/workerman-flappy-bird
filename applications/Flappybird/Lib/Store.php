@@ -3,7 +3,7 @@ namespace Lib;
 /**
  * 存储类
  * 这里用memcache实现
- * @author walkor <walkor@workerman.net>
+ * @author walkor <workerman.net>
  */
 class Store
 {
@@ -25,25 +25,12 @@ class Store
         {
             if(!isset(\Config\Store::$$config_name))
             {
-                echo "\\Config\\Store::$config_name not set\n";
-                throw new \Exception("\\Config\\Store::$config_name not set\n");
+                throw new \Exception('\Config\Store::$config_name not set');
             }
             
             if(!isset(self::$instance[$config_name]))
             {
-                if(extension_loaded('Memcached'))
-                {
-                    self::$instance[$config_name] = new \Memcached;
-                }
-                elseif(extension_loaded('Memcache'))
-                {
-                    self::$instance[$config_name] = new \Memcache;
-                }
-                else
-                {
-                    sleep(2);
-                    exit("extension memcached is not installed\n");
-                }
+                self::$instance[$config_name] = new \Memcache;
                 foreach(\Config\Store::$$config_name as $address)
                 {
                     list($ip, $port) = explode(':', $address);

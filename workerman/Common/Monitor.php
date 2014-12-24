@@ -70,7 +70,7 @@ class Monitor extends Man\Core\SocketWorker
      * worker占用内存限制 单位KB
      * @var integer
      */
-    const DEFAULT_MEM_LIMIT = 124000;
+    const DEFAULT_MEM_LIMIT = 83886;
     
     /**
      * 上次获得的主进程信息 
@@ -121,7 +121,7 @@ class Monitor extends Man\Core\SocketWorker
         \Man\Core\Lib\Task::add(self::CHECK_MASTER_PROCESS_TIME_LONG, array($this, 'checkMasterProcess'));
         \Man\Core\Lib\Task::add(self::CHECK_MASTER_STATUS_TIME_LONG, array($this, 'checkMasterStatus'));
         \Man\Core\Lib\Task::add(self::CHECK_MASTER_STATUS_TIME_LONG, array($this, 'checkMemUsage'));
-
+        
         // 添加accept事件
         $this->event->add($this->mainSocket,  \Man\Core\Events\BaseEvent::EV_READ, array($this, 'onAccept'));
         
@@ -142,7 +142,7 @@ class Monitor extends Man\Core\SocketWorker
         if($fd)
         {
             $this->currentDealFd = (int)$fd;
-            if($this->protocol != 'unix' && $this->getRemoteIp() != '127.0.0.1' )
+            if($this->getRemoteIp() != '127.0.0.1')
             {
                 $this->sendToClient("Password\n");
             }
@@ -231,10 +231,6 @@ class Monitor extends Man\Core\SocketWorker
                 $pid_worker_name_map = $this->getPidWorkerMap();
                 foreach($worker_pids as $worker_name=>$pid_array)
                 {
-                    if('Monitor' === $worker_name)
-                    {
-                        continue;
-                    }
                     if($this->maxWorkerNameLength < strlen($worker_name))
                     {
                         $this->maxWorkerNameLength = strlen($worker_name);
@@ -262,7 +258,7 @@ class Monitor extends Man\Core\SocketWorker
                 }
                 $loadavg = sys_getloadavg();
                 $this->sendToClient("---------------------------------------GLOBAL STATUS--------------------------------------------\n");
-                $this->sendToClient(\Man\Core\Master::NAME.' version:' . \Man\Core\Master::VERSION . "          PHP version:".PHP_VERSION."\n");
+                $this->sendToClient(\Man\Core\Master::NAME.' version:' . \Man\Core\Master::VERSION . "\n");
                 $this->sendToClient('start time:'. date('Y-m-d H:i:s', $status['start_time']).'   run ' . floor((time()-$status['start_time'])/(24*60*60)). ' days ' . floor(((time()-$status['start_time'])%(24*60*60))/(60*60)) . " hours   \n");
                 $this->sendToClient('load average: ' . implode(", ", $loadavg) . "\n");
                 $this->sendToClient(count($this->connections) . ' users          ' . count($worker_pids) . ' workers       ' . count($pid_worker_name_map)." processes\n");
@@ -283,53 +279,34 @@ class Monitor extends Man\Core\SocketWorker
                 }
                 
                 $this->sendToClient("---------------------------------------PROCESS STATUS-------------------------------------------\n");
-                $this->sendToClient("pid\tmemory  ".str_pad('listening', $this->maxAddressLength)." timestamp  ".str_pad('worker_name', $this->maxWorkerNameLength)." ".str_pad('total_request', 13)." ".str_pad('packet_err', 10)." ".str_pad('thunder_herd', 12)." ".str_pad('client_close', 12)." ".str_pad('send_fail', 9)." ".str_pad('throw_exception', 15)." suc/total status\n");
+                $this->sendToClient("pid\tmemory  ".str_pad('    listening', $this->maxAddressLength)." timestamp  ".str_pad('worker_name', $this->maxWorkerNameLength)." ".str_pad('total_request', 13)." ".str_pad('packet_err', 10)." ".str_pad('thunder_herd', 12)." ".str_pad('client_close', 12)." ".str_pad('send_fail', 9)." ".str_pad('throw_exception', 15)." suc/total\n");
                 if(!\Man\Core\Master::getQueueId())
                 {
                     return;
                 }
                 
-                $time_start = microtime(true);
+                $time_start = time();
                 unset($pid_worker_name_map[posix_getpid()]);
                 $total_worker_count = count($pid_worker_name_map);
                 foreach($pid_worker_name_map as $pid=>$worker_name)
                 {
                     posix_kill($pid, SIGUSR1);
-                    if($response_pid = $this->getStatusFromQueue())
+                    if($this->getStatusFromQueue())
                     {
-                        unset($pid_worker_name_map[$response_pid]);
                         $total_worker_count--;
                     }
                 }
                 
-                while(count($pid_worker_name_map) > 0)
+                while($total_worker_count > 0)
                 {
-                    if($response_pid = $this->getStatusFromQueue())
+                    if($this->getStatusFromQueue())
                     {
-                        unset($pid_worker_name_map[$response_pid]);
                         $total_worker_count--;
                     }
-                    if(microtime(true) - $time_start > 0.1)
+                    if(time() - $time_start > 1)
                     {
                         break;
                     }
-                }
-                
-                foreach($pid_worker_name_map as $pid=>$worker_name)
-                {
-                    if('FileMonitor' == $worker_name)
-                    {
-                        continue;
-                    }
-                    
-                    $address = \Man\Core\Lib\Config::get($worker_name . '.listen');
-                    if(!$address)
-                    {
-                        $address = 'none';
-                    }
-                    $str = "$pid\t".str_pad("N/A", 7)." " .str_pad($address,$this->maxAddressLength) ." N/A        ".str_pad($worker_name, $this->maxWorkerNameLength)." ";
-                    $str = $str . str_pad("N/A", 14)." ".str_pad("N/A",10)." ".str_pad("N/A",12)." ".str_pad("N/A", 12)." ".str_pad("N/A",9)." ".str_pad("N/A",15)." N/A       \033[33;33mbusy\033[0m";
-                    $this->sendToClient($str."\n");
                 }
                 break;
                 // 停止server
@@ -394,19 +371,19 @@ class Monitor extends Man\Core\SocketWorker
             $address = \Man\Core\Lib\Config::get($worker_name . '.listen');
             if(!$address)
             {
-                $address = 'none';
+                $address = '';
             }
             $str = "$pid\t".str_pad(round($message['memory']/(1024*1024),2)."M", 7)." " .str_pad($address,$this->maxAddressLength) ." ". $message['start_time'] ." ".str_pad($worker_name, $this->maxWorkerNameLength)." ";
             if($message)
             {
-                $str = $str . str_pad($message['total_request'], 14)." ".str_pad($message['packet_err'],10)." ".str_pad($message['thunder_herd'],12)." ".str_pad($message['client_close'], 12)." ".str_pad($message['send_fail'],9)." ".str_pad($message['throw_exception'],15)." ".str_pad(($message['total_request'] == 0 ? 100 : (round(($message['total_request']-($message['packet_err']+$message['send_fail']))/$message['total_request'], 6)*100))."%", 9) . " \033[32;40midle\033[0m";
+                $str = $str . str_pad($message['total_request'], 14)." ".str_pad($message['packet_err'],10)." ".str_pad($message['thunder_herd'],12)." ".str_pad($message['client_close'], 12)." ".str_pad($message['send_fail'],9)." ".str_pad($message['throw_exception'],15)." ".($message['total_request'] == 0 ? 100 : (round(($message['total_request']-($message['packet_err']+$message['send_fail']))/$message['total_request'], 6)*100))."%";
             }
             else
             {
                 $str .= var_export($message, true);
             }
             $this->sendToClient($str."\n");
-            return $pid;
+            return true;
         }
         return false;
     }
@@ -635,4 +612,5 @@ class Monitor extends Man\Core\SocketWorker
     {
         return is_file($path) ? unlink($path) : array_map(array($this, 'recursiveDelete'),glob($path.'/*')) == rmdir($path);
     }
+    
 } 
