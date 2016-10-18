@@ -509,7 +509,7 @@ abstract class SocketWorker extends AbstractWorker
      * @param null $null
      * @param int $signal
      */
-    public function signalHandler($signal, $null = null, $null = null)
+    public function signalHandler($signal, $null1 = null, $null2 = null)
     {
         switch($signal)
         {
