@@ -272,7 +272,7 @@ class WebServer extends Man\Core\SocketWorker
             {
                 $file_content = file_get_contents($file);
                 // 缓存文件
-                if($info['size'] < self::MAX_CACHE_FILE_SIZE && $file_content)
+                /*if($info['size'] < self::MAX_CACHE_FILE_SIZE && $file_content)
                 {
                     self::$fileCache[$file] = $file_content;
                     // 缓存满了删除一个文件
@@ -282,7 +282,7 @@ class WebServer extends Man\Core\SocketWorker
                         reset(self::$fileCache);
                         unset(self::$fileCache[key(self::$fileCache)]);
                     }
-                }
+                }*/
             }
             else
             {
